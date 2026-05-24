@@ -90,6 +90,12 @@ sudo kubectl get svc nginx-nodeport-service
 
 只要 Pod 状态显示为 Running 且服务创建成功，这两种路径至少有一种可以立刻带你看到 Nginx 的欢迎界面！
 
+4. 删除nginx相关资源
+```bash
+sudo kubectl delete deployment nginx-test
+sudo kubectl delete svc nginx-nodeport-service
+```
+
 
 ##### 获取k3s-master ip和token名用于安装k3s-worker
 
