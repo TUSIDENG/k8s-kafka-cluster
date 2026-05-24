@@ -25,7 +25,7 @@ nano kafka-3-replicas.yaml
 配置如下：
 ```yaml
 # ==========================================
-# 1. 基础环境与权限配置 (RBAC)
+# 1. 基础环境与全局上帝权限 (RBAC)
 # ==========================================
 apiVersion: v1
 kind: Namespace
@@ -38,6 +38,7 @@ metadata:
   name: strimzi-cluster-operator
   namespace: kafka
 ---
+# 🚀 强行绑定上帝权限，彻底杜绝 1.0.0 新版租约(Lease)权限产生的任何 Forbidden 闪退
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -48,25 +49,11 @@ subjects:
     namespace: kafka
 roleRef:
   kind: ClusterRole
-  name: strimzi-cluster-operator
-  apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: strimzi-cluster-operator-leases
-  namespace: kafka
-subjects:
-  - kind: ServiceAccount
-    name: strimzi-cluster-operator
-    namespace: kafka
-roleRef:
-  kind: ClusterRole
-  name: strimzi-cluster-operator
+  name: cluster-admin
   apiGroup: rbac.authorization.k8s.io
 ---
 # ==========================================
-# 2. Strimzi 1.0.0 Operator 控制器部署（无 args 标准版）
+# 2. Strimzi 1.0.0 Operator 控制器（最新版·WSL2 调优）
 # ==========================================
 apiVersion: apps/v1
 kind: Deployment
@@ -86,13 +73,23 @@ spec:
       serviceAccountName: strimzi-cluster-operator
       containers:
         - name: strimzi-cluster-operator
-          image: quay.io/strimzi/operator:1.0.0
+          image: quay.io/strimzi/operator:1.0.0 # 🚀 回归最新的 1.0.0 版本
           imagePullPolicy: IfNotPresent
-          # 🚀 移除 args，恢复镜像默认入口；同时用 root 特权防止 WSL2 底层拦截
-          securityContext:
-            runAsUser: 0
-            privileged: true
+          # 🚀 核心修复 1：压榨容器内核边界，防止 JVM 盲目申请大内存导致 WSL2 崩溃
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
           env:
+            # 🚀 核心修复 2：针对 1.0.0 的 OpenJDK 21 进行极限降额
+            # -Xms128m/-Xmx384m: 把内存砍到最低
+            # -XX:-UseLargePages: 彻底禁用大页内存映射，这是破除 WSL2 无日志闪退的关键！
+            # -XX:+UseSerialGC: 换用最轻量化的串行垃圾回收器
+            - name: JAVA_OPTS
+              value: "-Xms128m -Xmx384m -XX:-UseLargePages -XX:+UseSerialGC"
             - name: STRIMZI_NAMESPACE
               value: "kafka"
             - name: STRIMZI_DEFAULT_KAFKA_EXPORTER_IMAGE
