@@ -66,7 +66,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 # ==========================================
-# 2. Strimzi 1.0.0 Operator 控制器部署
+# 2. Strimzi 1.0.0 Operator 控制器部署（完美常驻版）
 # ==========================================
 apiVersion: apps/v1
 kind: Deployment
@@ -88,6 +88,9 @@ spec:
         - name: strimzi-cluster-operator
           image: quay.io/strimzi/operator:1.0.0
           imagePullPolicy: IfNotPresent
+          # 🚀 核心修复：显式指定启动参数，逼迫它进入无限循环监听，不允许退出！
+          args:
+            - /opt/strimzi/bin/launch_operator.sh
           env:
             - name: STRIMZI_NAMESPACE
               value: "kafka"
