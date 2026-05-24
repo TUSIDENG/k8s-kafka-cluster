@@ -24,21 +24,127 @@ nano kafka-3-replicas.yaml
 ```
 配置如下：
 ```yaml
-apiVersion: kafka.strimzi.io/v1beta2
+# ==========================================
+# 1. 基础环境与权限配置 (RBAC)
+# ==========================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kafka
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: strimzi-cluster-operator
+  namespace: kafka
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: strimzi-cluster-operator
+subjects:
+  - kind: ServiceAccount
+    name: strimzi-cluster-operator
+    namespace: kafka # 🚀 强行锁定为 kafka 命名空间，彻底根治 403 Forbidden 租约错误
+roleRef:
+  kind: ClusterRole
+  name: strimzi-cluster-operator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: strimzi-cluster-operator-leases
+  namespace: kafka
+subjects:
+  - kind: ServiceAccount
+    name: strimzi-cluster-operator
+    namespace: kafka
+roleRef:
+  kind: ClusterRole
+  name: strimzi-cluster-operator
+  apiGroup: rbac.authorization.k8s.io
+---
+# ==========================================
+# 2. Strimzi 1.0.0 Operator 控制器部署
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: strimzi-cluster-operator
+  namespace: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: strimzi-cluster-operator
+  template:
+    metadata:
+      labels:
+        name: strimzi-cluster-operator
+    spec:
+      serviceAccountName: strimzi-cluster-operator
+      containers:
+        - name: strimzi-cluster-operator
+          image: quay.io/strimzi/operator:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: STRIMZI_NAMESPACE
+              value: "kafka"
+            - name: STRIMZI_DEFAULT_KAFKA_EXPORTER_IMAGE
+              value: quay.io/strimzi/kafka:latest-kafka-3.7.0
+            - name: STRIMZI_DEFAULT_CRUISE_CONTROL_IMAGE
+              value: quay.io/strimzi/cruise-control:latest
+            - name: STRIMZI_LEADER_ELECTION_ENABLED
+              value: "true"
+---
+# ==========================================
+# 3. Kafka 1.0.0 架构：三副本持久化节点池
+# ==========================================
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: kraft-pool
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  replicas: 3                     # 🚀 显式声明 3 副本
+  roles:
+    - broker
+    - controller                  # 采用内置 KRaft 混合角色
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 6Gi
+        deleteClaim: false        # Pod 删了也绝对不删硬盘数据
+        class: local-path         # 🚀 强行指定 K3s 自带的本地动态持久化存储
+  template:
+    pod:
+      topologySpreadConstraints: []
+---
+# ==========================================
+# 4. Kafka 集群元数据与网络暴露
+# ==========================================
+apiVersion: kafka.strimzi.io/v1
 kind: Kafka
 metadata:
   name: my-cluster
   namespace: kafka
+  annotations:
+    strimzi.io/node-pools: "enabled"
+    strimzi.io/kraft: "enabled"
 spec:
   kafka:
     version: 3.7.0
-    replicas: 3
     listeners:
       - name: plain
         port: 9092
         type: internal
         tls: false
-      - name: external
+      - name: external            # 🚀 暴露给 Windows 宿主机的外部 NodePort 通道
         port: 9094
         type: nodeport
         tls: false
@@ -48,24 +154,73 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
-      inter.broker.protocol.version: "3.7"
-    storage:
-      # 🚀 从 ephemeral 改为持久化存储卷声明（Persistent Claim）
-      type: jbod
-      volumes:
-        - id: 0
-          type: persistent-claim
-          size: 5Gi # 限制每个节点最多使用 5GB 磁盘空间
-          deleteClaim: false # 即使 Pod 删了，也绝对不自动删除底层的硬盘数据
-          class: local-path  # 🚀 使用 K3s 自带的本地动态持久化存储类
-    template:
-      pod:
-        spec:
-          topologySpreadConstraints: []
-  kraft: {}
 ```
 
 5. 应用配置
 ```bash
 sudo kubectl apply -f kafka-3-replicas.yaml
+```
+
+5. 进入滚动监听状态
+```bash
+sudo kubectl get pods -n kafka -w
+```
+
+6. 查看集群状态
+```bash
+sudo kubectl get kafka my-cluster -n kafka
+```
+
+7. 查看volume 状态
+```bash
+sudo kubectl get pvc -n kafka
+
+# 使用local-path,在如下路径可以看到看到 Kafka 的 log 日志分片和数据：
+ls -l /var/lib/rancher/k3s/storage/
+```
+
+8. 查看operator状态
+```bash
+sudo kubectl describe pod -n kafka -l name=strimzi-cluster-operator
+```
+
+## 常见问题处理
+
+### 失败后删除服务重来
+1. 删除kafka集群和节点池
+```bash
+sudo kubectl delete kafka my-cluster -n kafka --ignore-not-found=true
+sudo kubectl delete kafkanodepool kraft-pool -n kafka --ignore-not-found=true
+```
+
+2. 查看operator报错日志
+```bash
+sudo kubectl logs -n kafka -l name=strimzi-cluster-operator --tail=100
+```
+
+### 权限命名冲突
+```bash
+# 1. 安全地干掉旧的、卡死的集群权限绑定
+sudo kubectl delete clusterrolebinding strimzi-cluster-operator
+
+# 2. 重新一键应用你的一体化 YAML，建立正确的持久化三副本通路
+ sudo kubectl apply -f kafka-3-replicas.yaml
+```
+
+生产环境避免权限命名冲突
+* 通过 Helm Chart 自动渲染命名空间（最主流）
+* 在 YAML 配置文件中为资源命名“加后缀”
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: strimzi-cluster-operator-kafka-prod # 🚀 加上特定的后缀
+subjects:
+  - kind: ServiceAccount
+    name: strimzi-cluster-operator
+    namespace: kafka
+roleRef:
+  kind: ClusterRole
+  name: strimzi-cluster-operator
+  apiGroup: rbac.authorization.k8s.io
 ```
