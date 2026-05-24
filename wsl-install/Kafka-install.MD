@@ -45,7 +45,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: strimzi-cluster-operator
-    namespace: kafka # 🚀 强行锁定为 kafka 命名空间，彻底根治 403 Forbidden 租约错误
+    namespace: kafka
 roleRef:
   kind: ClusterRole
   name: strimzi-cluster-operator
@@ -66,7 +66,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 # ==========================================
-# 2. Strimzi 1.0.0 Operator 控制器部署（完美常驻版）
+# 2. Strimzi 1.0.0 Operator 控制器部署（无 args 标准版）
 # ==========================================
 apiVersion: apps/v1
 kind: Deployment
@@ -88,9 +88,10 @@ spec:
         - name: strimzi-cluster-operator
           image: quay.io/strimzi/operator:1.0.0
           imagePullPolicy: IfNotPresent
-          # 🚀 核心修复：显式指定启动参数，逼迫它进入无限循环监听，不允许退出！
-          args:
-            - /opt/strimzi/bin/launch_operator.sh
+          # 🚀 移除 args，恢复镜像默认入口；同时用 root 特权防止 WSL2 底层拦截
+          securityContext:
+            runAsUser: 0
+            privileged: true
           env:
             - name: STRIMZI_NAMESPACE
               value: "kafka"
@@ -112,18 +113,18 @@ metadata:
   labels:
     strimzi.io/cluster: my-cluster
 spec:
-  replicas: 3                     # 🚀 显式声明 3 副本
+  replicas: 3
   roles:
     - broker
-    - controller                  # 采用内置 KRaft 混合角色
+    - controller
   storage:
     type: jbod
     volumes:
       - id: 0
         type: persistent-claim
-        size: 6Gi
-        deleteClaim: false        # Pod 删了也绝对不删硬盘数据
-        class: local-path         # 🚀 强行指定 K3s 自带的本地动态持久化存储
+        size: 10Gi
+        deleteClaim: false
+        class: local-path
   template:
     pod:
       topologySpreadConstraints: []
@@ -147,7 +148,7 @@ spec:
         port: 9092
         type: internal
         tls: false
-      - name: external            # 🚀 暴露给 Windows 宿主机的外部 NodePort 通道
+      - name: external
         port: 9094
         type: nodeport
         tls: false
