@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  labels:
+    app: kafka
+spec:
+  clusterIP: None  # Headless Service，用于 Kafka 节点之间互相发现并通信
+  ports:
+  - port: 9092
+    name: plaintext
+  - port: 9093
+    name: controller
+  selector:
+    app: kafka
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+spec:
+  serviceName: "kafka-headless"
+  replicas: 3  # 建立 3 个 Kafka 副本
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+      - name: kafka
+        image: docker.m.daocloud.io/apache/kafka:3.8.0  # Apache 原生镜像，KRaft 模式
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/bash
+          - -c
+          - |
+            export NODE_ID=$$(echo $$HOSTNAME | sed -e 's/kafka-//')
+            export KAFKA_NODE_ID=$$NODE_ID
+            export LOG_DIRS=/var/lib/kafka/logs
+            mkdir -p $$LOG_DIRS
+            if [ ! -f $$LOG_DIRS/meta.properties ]; then
+              /opt/kafka/bin/kafka-storage.sh format -t 4L62ZDwTQCmO-1NisCH06A -c /opt/kafka/config/kraft/server.properties
+            fi
+            exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
+        env:
+        # 1. KRaft 模式配置
+        - name: KAFKA_PROCESS_ROLES
+          value: "controller,broker"
+        - name: KAFKA_LISTENERS
+          value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://$(POD_NAME).kafka-headless.default.svc.cluster.local:9092"
+        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+          value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+        - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+          value: "0@kafka-0.kafka-headless.default.svc.cluster.local:9093,1@kafka-1.kafka-headless.default.svc.cluster.local:9093,2@kafka-2.kafka-headless.default.svc.cluster.local:9093"
+        - name: KAFKA_CONTROLLER_LISTENER_NAMES
+          value: "CONTROLLER"
+        # 2. 集群 ID（KRaft 模式必须）
+        - name: KAFKA_CLUSTER_ID
+          value: "4L62ZDwTQCmO-1NisCH06A"
+        - name: LOG_DIRS
+          value: /var/lib/kafka/logs
+        # 3. 动态获取 Pod 名称用于计算 Node ID
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        ports:
+        - containerPort: 9092
+          name: plaintext
+        - containerPort: 9093
+          name: controller
+        # 7. 自动持久化：Bitnami 镜像会将数据存放在 /bitnami/kafka
+        volumeMounts:
+        - name: kafka-data
+          mountPath: /var/lib/kafka
+  # 8. 自动申请存储卷（kind 集群自带默认的 StorageClass，会自动在宿主机创建虚拟硬盘）
+  volumeClaimTemplates:
+  - metadata:
+      name: kafka-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 2Gi
