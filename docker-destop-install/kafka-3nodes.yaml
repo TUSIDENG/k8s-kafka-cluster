@@ -60,19 +60,33 @@ spec:
           - /bin/bash
           - -c
           - |
+            # 1. 从Pod名称中提取节点ID（kafka-0 -> 0, kafka-1 -> 1, kafka-2 -> 2）
             export NODE_ID=$$(echo $$HOSTNAME | sed -e 's/kafka-//')
+            # 2. 设置Kafka日志目录
             export LOG_DIRS=/var/lib/kafka/logs
+            # 3. 创建日志目录（确保目录存在）
             mkdir -p $$LOG_DIRS
-            # 在格式化之前先修改配置文件
+            
+            # 4. 在格式化存储之前必须先修改配置文件，否则会使用默认配置
+            # 设置节点ID（每个broker必须有唯一的node.id）
             sed -i "s|node.id=.*|node.id=$$NODE_ID|g" /opt/kafka/config/kraft/server.properties
+            # 设置控制器投票者列表（包含所有3个节点的CONTROLLER端口）
             sed -i "s|controller.quorum.voters=.*|controller.quorum.voters=0@kafka-0.kafka-headless.default.svc.cluster.local:9093,1@kafka-1.kafka-headless.default.svc.cluster.local:9093,2@kafka-2.kafka-headless.default.svc.cluster.local:9093|g" /opt/kafka/config/kraft/server.properties
+            # 设置监听器：INTERNAL(集群内部), EXTERNAL(外部客户端), CONTROLLER(控制器通信)
             sed -i "s|listeners=.*|listeners=INTERNAL://:9092,EXTERNAL://:9094,CONTROLLER://:9093|g" /opt/kafka/config/kraft/server.properties
+            # 设置宣告监听器：内部使用headless service域名，外部使用localhost
             sed -i "s|advertised.listeners=.*|advertised.listeners=INTERNAL://$$HOSTNAME.kafka-headless.default.svc.cluster.local:9092,EXTERNAL://localhost:9092|g" /opt/kafka/config/kraft/server.properties
+            # 设置监听器安全协议映射（全部使用PLAINTEXT）
             sed -i "s|listener.security.protocol.map=.*|listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT|g" /opt/kafka/config/kraft/server.properties
+            # 设置broker间通信使用INTERNAL监听器
             sed -i "s|inter.broker.listener.name=.*|inter.broker.listener.name=INTERNAL|g" /opt/kafka/config/kraft/server.properties
+            
+            # 5. 如果是首次启动（meta.properties不存在），格式化存储
             if [ ! -f $$LOG_DIRS/meta.properties ]; then
               /opt/kafka/bin/kafka-storage.sh format -t 4L62ZDwTQCmO-1NisCH06A -c /opt/kafka/config/kraft/server.properties
             fi
+            
+            # 6. 启动Kafka服务器
             exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/kraft/server.properties
         env:
         # 1. KRaft 模式配置
