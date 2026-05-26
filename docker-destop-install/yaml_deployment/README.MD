@@ -1,7 +1,4 @@
-# 通过kind 安装kafka集群
-
-##  安装kind k8s集群
-![kind-install](imgs/Kind_K8s_create_01.png)
+# YAML 部署kafka集群
 
 ## 部署kafka集群
 ```bash
@@ -37,8 +34,8 @@ kubectl get nodes -o wide
 
 3. 转发node port
 ```bash
-# 转发node port 9092 到本地 30092
-# 可以通过 http://localhost:30092 访问 Kafka 服务
+# 转发node port 9094 到本地 9092
+# 可以通过 http://localhost:9092 访问 Kafka 服务
 kubectl port-forward svc/kafka-nodeport 9092:9094
 ```
 

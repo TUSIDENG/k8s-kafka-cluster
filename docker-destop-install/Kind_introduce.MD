@@ -1,3 +1,9 @@
+## Kind 介绍
+
+##  安装kind k8s集群
+![kind-install](imgs/Kind_K8s_create_01.png)
+
+##  Kind 工作原理
 **Kind（全称Kubernetes in Docker）是一个用于在Docker容器中快速运行本地Kubernetes集群的开源工具。**
 
 它通过容器来“模拟”Kubernetes的各个节点（Node），从而提供一套轻量级、易于使用的开发和测试环境。
