@@ -8,7 +8,9 @@ spec:
   clusterIP: None  # Headless Service，用于 Kafka 节点之间互相发现并通信
   ports:
   - port: 9092
-    name: plaintext
+    name: internal
+  - port: 9094
+    name: external
   - port: 9093
     name: controller
   selector:
@@ -29,11 +31,11 @@ spec:
   selector:
     app: kafka
   ports:
-    # Kafka 客户端连接端口
-    - port: 9092
-      targetPort: 9092
+    # Kafka 外部客户端连接端口
+    - port: 9094
+      targetPort: 9094
       nodePort: 30092  # 外部访问端口，通过 <节点IP>:30092 连接
-      name: kafka
+      name: external
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -59,9 +61,15 @@ spec:
           - -c
           - |
             export NODE_ID=$$(echo $$HOSTNAME | sed -e 's/kafka-//')
-            export KAFKA_NODE_ID=$$NODE_ID
             export LOG_DIRS=/var/lib/kafka/logs
             mkdir -p $$LOG_DIRS
+            # 在格式化之前先修改配置文件
+            sed -i "s|node.id=.*|node.id=$$NODE_ID|g" /opt/kafka/config/kraft/server.properties
+            sed -i "s|controller.quorum.voters=.*|controller.quorum.voters=0@kafka-0.kafka-headless.default.svc.cluster.local:9093,1@kafka-1.kafka-headless.default.svc.cluster.local:9093,2@kafka-2.kafka-headless.default.svc.cluster.local:9093|g" /opt/kafka/config/kraft/server.properties
+            sed -i "s|listeners=.*|listeners=INTERNAL://:9092,EXTERNAL://:9094,CONTROLLER://:9093|g" /opt/kafka/config/kraft/server.properties
+            sed -i "s|advertised.listeners=.*|advertised.listeners=INTERNAL://$$HOSTNAME.kafka-headless.default.svc.cluster.local:9092,EXTERNAL://localhost:9092|g" /opt/kafka/config/kraft/server.properties
+            sed -i "s|listener.security.protocol.map=.*|listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT|g" /opt/kafka/config/kraft/server.properties
+            sed -i "s|inter.broker.listener.name=.*|inter.broker.listener.name=INTERNAL|g" /opt/kafka/config/kraft/server.properties
             if [ ! -f $$LOG_DIRS/meta.properties ]; then
               /opt/kafka/bin/kafka-storage.sh format -t 4L62ZDwTQCmO-1NisCH06A -c /opt/kafka/config/kraft/server.properties
             fi
@@ -70,12 +78,6 @@ spec:
         # 1. KRaft 模式配置
         - name: KAFKA_PROCESS_ROLES
           value: "controller,broker"
-        - name: KAFKA_LISTENERS
-          value: "PLAINTEXT://:9092,CONTROLLER://:9093"
-        - name: KAFKA_ADVERTISED_LISTENERS
-          value: "PLAINTEXT://$(POD_NAME).kafka-headless.default.svc.cluster.local:9092"
-        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
-          value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
         - name: KAFKA_CONTROLLER_QUORUM_VOTERS
           value: "0@kafka-0.kafka-headless.default.svc.cluster.local:9093,1@kafka-1.kafka-headless.default.svc.cluster.local:9093,2@kafka-2.kafka-headless.default.svc.cluster.local:9093"
         - name: KAFKA_CONTROLLER_LISTENER_NAMES
@@ -92,7 +94,9 @@ spec:
               fieldPath: metadata.name
         ports:
         - containerPort: 9092
-          name: plaintext
+          name: internal
+        - containerPort: 9094
+          name: external
         - containerPort: 9093
           name: controller
         # 7. 自动持久化：Bitnami 镜像会将数据存放在 /bitnami/kafka

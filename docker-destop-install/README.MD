@@ -39,5 +39,5 @@ kubectl get nodes -o wide
 ```bash
 # 转发node port 9092 到本地 30092
 # 可以通过 http://localhost:30092 访问 Kafka 服务
-kubectl port-forward svc/kafka-nodeport 30092:9092
+kubectl port-forward svc/kafka-nodeport 9092:9094
 ```
