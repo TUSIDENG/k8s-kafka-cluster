@@ -41,3 +41,18 @@ kubectl get nodes -o wide
 # 可以通过 http://localhost:30092 访问 Kafka 服务
 kubectl port-forward svc/kafka-nodeport 9092:9094
 ```
+
+## 常见问题
+
+#### 转发端口被占用，如何解决？
+1. 查看占用端口的进程
+```powershell
+# 查看占用端口的进程
+netstat -ano | findstr :9092
+```
+
+2. 杀死占用进程
+```powershell
+# 24480替换为实际占用端口的进程ID
+taskkill /F /PID 24480
+```
