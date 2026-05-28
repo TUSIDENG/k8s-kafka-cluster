@@ -90,8 +90,12 @@ kubectl exec kafka-0 -- /opt/kafka/bin/kafka-console-consumer.sh --topic test-to
 # 转发到Service（推荐）
 kubectl port-forward svc/kafka-nodeport 9092:9094
 
-# 转发到Pod
-kubectl port-forward pod/kafka-0 9092:9094
+# 转发到Pod, 每个broker一个端口转发,才能访问到对应的broker
+kubectl port-forward -n default pod/kafka-0 9094:9094
+
+kubectl port-forward -n default pod/kafka-1 9095:9094
+
+kubectl port-forward -n default pod/kafka-2 9096:9094
 ```
 
 ### 查看Kafka日志
